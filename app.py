@@ -4,7 +4,8 @@ import time
 import requests
 import pandas as pd
 from profile_logic import determine_commuter_profile, COMMUTER_PROFILES
-import datetime
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 # --- Configuration ---
 # IMPORTANT: Replace "YOUR_GEMINI_API_KEY" with your actual Gemini API key.
@@ -155,7 +156,12 @@ def generate_bot_response_with_gemini(user_message, selected_profile, csv_summar
     the user's profile, simulated crowding data, and CSV survey summary.
     """
     profile_info = COMMUTER_PROFILES.get(selected_profile, {"description": "unknown", "logic_keywords": "unknown"})
-    current_hour = datetime.datetime.now().hour
+    
+    # Use the Europe/Amsterdam timezone for accurate time in the Netherlands
+    amsterdam_tz = ZoneInfo("Europe/Amsterdam")
+    now_in_netherlands = datetime.now(amsterdam_tz)
+    current_hour = now_in_netherlands.hour
+
     current_time_key = '7 AM' if 7 <= current_hour < 9 else '1 PM' if 12 <= current_hour < 14 else '5 PM' if 16 <= current_hour < 18 else '2 AM'
 
     # Construct the prompt for Gemini, including the CSV summary
@@ -195,9 +201,14 @@ st.markdown("Your personalized travel assistant for Almere.")
 st.sidebar.title("📊 Live Crowding Data")
 st.sidebar.markdown("*(Simulated data for demonstration)*")
 
-# Get current time to determine peak/off-peak
-current_hour = datetime.datetime.now().hour
+# Get current time in the Netherlands to determine peak/off-peak
+amsterdam_tz = ZoneInfo("Europe/Amsterdam")
+now_in_netherlands = datetime.now(amsterdam_tz)
+current_hour = now_in_netherlands.hour
+current_time_str = now_in_netherlands.strftime("%H:%M")
+
 current_time_key = '7 AM' if 7 <= current_hour < 9 else '1 PM' if 12 <= current_hour < 14 else '5 PM' if 16 <= current_hour < 18 else '2 AM'
+st.sidebar.markdown(f"**Current Time in Almere: {current_time_str}**")
 
 st.sidebar.subheader("Bus Lines")
 for line, times in SIMULATED_CROWDING_DATA.items():
