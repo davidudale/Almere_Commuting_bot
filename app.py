@@ -4,6 +4,7 @@ import time
 import requests
 import pandas as pd
 from profile_logic import determine_commuter_profile, COMMUTER_PROFILES
+import datetime
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -14,6 +15,7 @@ GEMINI_API_KEY = "AIzaSyAzPkgNT0nd4-IP_svJJFSmSWLZ5fZ_idA"
 GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key={GEMINI_API_KEY}"
 
 # --- Load and Analyze Survey Data from CSV ---
+csv_data_summary = ""
 try:
     df = pd.read_csv("urban.csv")
 
@@ -25,226 +27,93 @@ try:
     crowd_levels = df['How crowded is your usual bus during peak hours?'].value_counts()
 
     csv_data_summary = f"""
-    Summary of Urban Mobility Survey responses from Almere:
-    - The most common frustrations with the bus line are: {issues_frustration.head(3).to_dict()}
-    - The average commuter leaves for work/school around {commute_time:.0f}:00.
-    - The most common primary mode of transportation is: {primary_transport}.
-    - Commuters perceive peak hour crowding as follows: {crowd_levels.to_dict()}.
-    - A significant number of people {df[df['Would you be open to using an app that gives personal travel advice based on real-time crowd levels?'] == 'Yes'].shape[0]} are open to using a travel advice app.
+    Summary of Commuter Survey Data for Almere Bus Network:
+    - Average age of respondents: {age_average:.1f}
+    - Most common primary transportation: {primary_transport}
+    - Average commute start time: {commute_time:.0f}:00 AM
+    - Top frustration issues: {issues_frustration.index[0]}, {issues_frustration.index[1]}
+    - Reported peak hour crowd levels: Most respondents feel the bus is '{crowd_levels.idxmax()}'
     """
-except FileNotFoundError:
-    st.error("Survey data file not found. The bot will use general knowledge instead.")
-    csv_data_summary = "No survey data available for analysis."
+except Exception as e:
+    st.error(f"Error loading survey data: {e}")
+    st.warning("Please ensure 'urban.csv' is in the same directory as this script.")
+    df = pd.DataFrame()
 
-# --- Helper Functions for Time and Display ---
-def get_current_almere_time():
-    """Gets the current time and day in Almere, Netherlands."""
-    almere_tz = ZoneInfo("Europe/Amsterdam")
-    return datetime.now(almere_tz)
-
-def display_current_time():
-    """Displays the current time and updates it automatically."""
-    current_time_str = get_current_almere_time().strftime("%A, %B %d, %Y at %H:%M")
-    st.markdown(f"<div style='text-align: right; font-size: 0.8em; color: gray;'>Current time in Almere: {current_time_str}</div>", unsafe_allow_html=True)
-    time.sleep(1) # Rerun the script every second to update the time
-    st.rerun()
-
-# --- Simulated Crowding Data ---
-# This dictionary simulates real-time crowding data based on the provided heatmap image.
-SIMULATED_CROWDING_DATA = {
-    'M1': {
-        '7 AM': {'status': 'moderately crowded', 'percentage': 70},
-        '8 AM': {'status': 'very crowded', 'percentage': 95},
-        '1 PM': {'status': 'not crowded', 'percentage': 30},
-        '5 PM': {'status': 'moderately crowded', 'percentage': 75},
-        '6 PM': {'status': 'very crowded', 'percentage': 90},
-        '2 AM': {'status': 'not crowded', 'percentage': 5}
-    },
-    'M2': {
-        '7 AM': {'status': 'moderately crowded', 'percentage': 65},
-        '8 AM': {'status': 'very crowded', 'percentage': 85},
-        '1 PM': {'status': 'not crowded', 'percentage': 25},
-        '5 PM': {'status': 'very crowded', 'percentage': 80},
-        '6 PM': {'status': 'moderately crowded', 'percentage': 60},
-        '2 AM': {'status': 'not crowded', 'percentage': 10}
-    },
-    'M7': {
-        '7 AM': {'status': 'very crowded', 'percentage': 85},
-        '8 AM': {'status': 'overcrowded', 'percentage': 100},
-        '1 PM': {'status': 'moderately crowded', 'percentage': 50},
-        '5 PM': {'status': 'overcrowded', 'percentage': 100},
-        '6 PM': {'status': 'very crowded', 'percentage': 95},
-        '2 AM': {'status': 'not crowded', 'percentage': 15}
-    },
-    'Bus 24': {
-        '7 AM': {'status': 'not crowded', 'percentage': 40},
-        '8 AM': {'status': 'moderately crowded', 'percentage': 60},
-        '1 PM': {'status': 'not crowded', 'percentage': 35},
-        '5 PM': {'status': 'moderately crowded', 'percentage': 55},
-        '6 PM': {'status': 'moderately crowded', 'percentage': 70},
-        '2 AM': {'status': 'not crowded', 'percentage': 5}
-    }
-}
-
-def call_gemini_api(prompt_text):
+# --- Gemini API Call ---
+def generate_bot_response_with_gemini(prompt, profile, csv_summary):
     """
-    Calls the Gemini API with the given prompt and handles exponential backoff.
+    Generates a bot response using the Gemini API, grounded in user profile
+    and CSV data summary.
     """
-    headers = {
-        'Content-Type': 'application/json'
-    }
-    payload = {
-        "contents": [
-            {"role": "user", "parts": [{"text": prompt_text}]}
-        ]
-    }
+    try:
+        # Define the system instruction to set the bot's persona and context
+        system_prompt = f"""
+        You are an urban mobility assistant designed to give personalized travel advice.
+        Your persona is: helpful, knowledgeable, and empathetic.
+        The user's commuter profile is: '{profile}'
+        You have access to the following summarized survey data about Almere commuters:
+        {csv_summary}
+        Use this information to provide tailored and relevant advice.
+        If the user asks about schedules or crowding, you can use the data you have, but be clear that the data is based on a survey and not real-time.
+        The current date and time is {datetime.now(ZoneInfo('Europe/Amsterdam')).strftime('%Y-%m-%d %H:%M:%S')}.
+        """
+        
+        headers = {
+            'Content-Type': 'application/json'
+        }
+        
+        payload = {
+            "contents": [
+                {"role": "user", "parts": [{"text": system_prompt}]},
+                {"role": "model", "parts": [{"text": "Hello, I'm ready to help you with your commute."}]},
+                {"role": "user", "parts": [{"text": prompt}]}
+            ],
+            "tools": [{"google_search": {}}]
+        }
 
-    retries = 0
-    max_retries = 5
-    base_delay = 1  # seconds
+        response = requests.post(GEMINI_API_URL, headers=headers, json=payload)
+        response.raise_for_status()
+        
+        result = response.json()
+        
+        # Check if the response contains valid content
+        if 'candidates' in result and result['candidates']:
+            candidate = result['candidates'][0]
+            if 'content' in candidate and 'parts' in candidate['content'] and candidate['content']['parts']:
+                return candidate['content']['parts'][0]['text']
+        return "I'm sorry, I couldn't generate a response. Please try again."
 
-    while retries < max_retries:
-        try:
-            response = requests.post(GEMINI_API_URL, headers=headers, data=json.dumps(payload))
-            response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
-            result = response.json()
+    except requests.exceptions.RequestException as e:
+        return f"An API error occurred: {e}"
 
-            if result.get('candidates') and result['candidates'][0].get('content') and \
-               result['candidates'][0]['content'].get('parts') and \
-               result['candidates'][0]['content']['parts'][0].get('text'):
-                return result['candidates'][0]['content']['parts'][0]['text']
-            else:
-                st.error(f"Unexpected API response structure: {result}")
-                return "I'm sorry, I couldn't generate a response due to an unexpected API format."
-
-        except requests.exceptions.RequestException as e:
-            retries += 1
-            if retries < max_retries:
-                delay = base_delay * (2 ** (retries - 1)) # Exponential backoff
-                time.sleep(delay)
-                # print(f"API call failed: {e}. Retrying in {delay} seconds...") # For debugging
-            else:
-                st.error(f"Failed to connect to Gemini API after {max_retries} retries: {e}")
-                return "I'm currently unable to connect to my knowledge base. Please try again later."
-        except json.JSONDecodeError:
-            st.error("Failed to decode JSON response from API.")
-            return "I'm sorry, I received an unreadable response from my knowledge base."
-    return "I'm currently unable to process your request. Please try again later."
+# --- Streamlit App UI and Logic ---
+st.set_page_config(page_title="Urbanvind Commuter Chatbot", page_icon="🚍")
+st.sidebar.title("Urbanvind Commuter Chatbot")
+st.sidebar.markdown("A personalized chatbot for Almere residents.")
 
 
-def generate_bot_response_with_gemini(user_message, selected_profile, csv_summary):
-    """
-    Generates a tailored bot response using the Gemini API, incorporating
-    the user's profile, simulated crowding data, and CSV survey summary.
-    """
-    profile_info = COMMUTER_PROFILES.get(selected_profile, {"description": "unknown", "logic_keywords": "unknown"})
-    
-    # Use the live Almere time for context
-    current_almere_time = get_current_almere_time()
-    current_hour = current_almere_time.hour
-    current_day = current_almere_time.strftime("%A")
-    current_time_key = '7 AM' if 7 <= current_hour < 9 else '8 AM' if current_hour == 8 else '1 PM' if 12 <= current_hour < 14 else '5 PM' if 16 <= current_hour < 18 else '6 PM' if current_hour == 18 else '2 AM'
-
-    # Construct the prompt for Gemini, including the CSV summary and live time context
-    prompt = f"""
-    You are Urbanvind Commuter Chatbot, a decision support system for Almere residents.
-    Your goal is to provide tailored travel suggestions and information based on the user's commuter profile, real-time (simulated) crowding data, and insights from a survey of Almere commuters.
-
-    Insights from the Almere Commuter Survey:
-    {csv_summary}
-
-    The user's profile is: "{selected_profile}".
-    This means: {profile_info['description']}
-    Key characteristics of this profile include: {profile_info['logic_keywords']}
-
-    Current live context:
-    - Time: {current_almere_time.strftime('%H:%M')}
-    - Day: {current_day}
-    - The most relevant time slot in the simulated data is: {current_time_key}
-    - Simulated crowding data for key routes at {current_time_key}:
-      {json.dumps(SIMULATED_CROWDING_DATA, indent=2)}
-
-    Based on the user's profile, the survey insights, and the crowding data, provide a tailored travel suggestion or answer their question.
-    Keep your response concise, helpful, and align it with their profile's characteristics.
-    If the user asks about crowding, use the provided simulated data.
-    If the user asks for general travel advice for Almere, use the current simulated crowding data and the survey insights to give a general recommendation.
-    If the user asks for general advice, use their profile to suggest appropriate actions (e.g., for 'Flexible Avoider', suggest proactive changes; for 'Peak Routine Commuter', acknowledge their routine but gently suggest minor adjustments if needed).
-    If the user asks about a time when a bus is not running, clearly state that.
-
-    User's message: "{user_message}"
-    """
-
-    response_text = call_gemini_api(prompt)
-    return response_text
-
-# --- Streamlit UI ---
-st.set_page_config(page_title="Urbanvind Commuter Chatbot", layout="centered")
-
-st.title("🏙️ Urbanvind Commuter Chatbot")
-st.markdown("Your personalized travel assistant for Almere.")
-
-# Display the current time at the top right
-display_current_time()
-
-# --- Sidebar for Live Crowding Data ---
-st.sidebar.title("📊 Live Crowding Data")
-st.sidebar.markdown("*(Simulated data for demonstration)*")
-
-# Get current time to determine peak/off-peak
-current_hour = get_current_almere_time().hour
-current_time_key = '7 AM' if 7 <= current_hour < 9 else '8 AM' if current_hour == 8 else '1 PM' if 12 <= current_hour < 14 else '5 PM' if 16 <= current_hour < 18 else '6 PM' if current_hour == 18 else '2 AM'
-
-st.sidebar.subheader("Bus Lines")
-for line, times in SIMULATED_CROWDING_DATA.items():
-    data = times.get(current_time_key, {'status': 'not crowded', 'percentage': 0})
-    status = data['status']
-    percentage = data['percentage']
-    color = "green" if percentage < 50 else "orange" if percentage < 80 else "red"
-    st.sidebar.markdown(f"**{line}** at {current_time_key}:")
-    st.sidebar.progress(percentage, text=f"{percentage}% ({status})")
-
-st.sidebar.subheader("Train Lines")
-# The image only shows bus lines, so we'll leave this section as a placeholder.
-st.sidebar.markdown("*(No simulated data for train lines available)*")
-
-# Initialize session state for conversation
+# Initialize session state variables
 if "chat_phase" not in st.session_state:
-    st.session_state.chat_phase = "questions"
-    st.session_state.questions_asked = 0
+    st.session_state.chat_phase = "profile_survey"
+if "user_answers" not in st.session_state:
     st.session_state.user_answers = {}
+if "selected_profile" not in st.session_state:
     st.session_state.selected_profile = None
+if "messages" not in st.session_state:
     st.session_state.messages = []
 
+# --- Profile Survey Phase ---
+if st.session_state.chat_phase == "profile_survey":
+    st.title("Commuter Profile Survey")
+    st.info("Please answer a few questions to help me understand your travel habits. This will help me give you more personalized advice.")
 
-# --- Conversation Flow Logic ---
-if st.session_state.chat_phase == "questions":
-    # Check if all questions have been asked
-    if st.session_state.questions_asked >= len(CONVERSATIONAL_QUESTIONS):
-        st.session_state.chat_phase = "determining_profile"
-        st.rerun()
+    # Modified Survey questions to demonstrate how to change the app
+    st.session_state.user_answers['Q1'] = st.radio("What is your primary mode of transportation for this trip?", ["Bus", "Train", "Car", "Bicycle"])
+    st.session_state.user_answers['Q2'] = st.radio("How important is a punctual arrival to you?", ["Not Important at all", "Somewhat Important", "Very Important", "Absolutely Critical"])
+    st.session_state.user_answers['Q3'] = st.radio("How often do you use this specific bus line?", ["Daily", "Several times a week", "A few times a month", "Rarely"])
+    st.session_state.user_answers['Q4'] = st.slider("On a scale of 1-5, how willing are you to stand for the entire trip?", 1, 5)
 
-    # If not all questions have been asked, display the next one
-    else:
-        current_question_index = st.session_state.questions_asked
-        current_question = CONVERSATIONAL_QUESTIONS[current_question_index]
-
-        # Use a single chat message container for the bot's question
-        with st.chat_message("bot"):
-            st.markdown(current_question['text'])
-
-        # Use radio buttons for all questions with predefined options
-        user_answer = st.radio(
-            "Please select an option:",
-            current_question['options'],
-            key=f"q_radio_{current_question_index}"
-        )
-        if st.button("Next Question", key=f"next_{current_question_index}"):
-            st.session_state.user_answers[current_question['key']] = user_answer
-            st.session_state.questions_asked += 1
-            st.rerun()
-
-elif st.session_state.chat_phase == "determining_profile":
-    with st.spinner("Analyzing your answers and determining your commuter profile..."):
+    if st.button("Determine my profile"):
         determined_profile = determine_commuter_profile(st.session_state.user_answers)
         st.session_state.selected_profile = determined_profile
 
@@ -255,13 +124,17 @@ elif st.session_state.chat_phase == "determining_profile":
         st.session_state.messages.append({"role": "bot", "content": "Now you can ask me for personalized travel advice!"})
         st.rerun()
         
+# --- Chatting Phase ---
 elif st.session_state.chat_phase == "chatting":
-    st.info(f"Your current profile: **{st.session_state.selected_profile}**")
-
+    if st.session_state.selected_profile:
+        st.info(f"Your current profile: **{st.session_state.selected_profile}**")
+    
+    # Display chat history
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
+    # Handle user input
     if prompt := st.chat_input("Type your message..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
@@ -271,7 +144,5 @@ elif st.session_state.chat_phase == "chatting":
             with st.spinner("Thinking..."):
                 bot_response = generate_bot_response_with_gemini(prompt, st.session_state.selected_profile, csv_data_summary)
                 st.markdown(bot_response)
-            st.session_state.messages.append({"role": "bot", "content": bot_response})
-
-    st.markdown("---")
-    st.caption("Note: Crowding data is simulated for this prototype.")
+        
+        st.session_state.messages.append({"role": "bot", "content": bot_response})
