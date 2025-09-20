@@ -4,7 +4,8 @@ import time
 import requests
 import pandas as pd
 from profile_logic import determine_commuter_profile, COMMUTER_PROFILES
-import datetime
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 # --- Configuration ---
 # IMPORTANT: Replace "YOUR_GEMINI_API_KEY" with your actual Gemini API key.
@@ -34,6 +35,19 @@ try:
 except FileNotFoundError:
     st.error("Survey data file not found. The bot will use general knowledge instead.")
     csv_data_summary = "No survey data available for analysis."
+
+# --- Helper Functions for Time and Display ---
+def get_current_almere_time():
+    """Gets the current time and day in Almere, Netherlands."""
+    almere_tz = ZoneInfo("Europe/Amsterdam")
+    return datetime.now(almere_tz)
+
+def display_current_time():
+    """Displays the current time and updates it automatically."""
+    current_time_str = get_current_almere_time().strftime("%A, %B %d, %Y at %H:%M")
+    st.markdown(f"<div style='text-align: right; font-size: 0.8em; color: gray;'>Current time in Almere: {current_time_str}</div>", unsafe_allow_html=True)
+    time.sleep(1) # Rerun the script every second to update the time
+    st.rerun()
 
 # --- Simulated Crowding Data ---
 # This dictionary simulates real-time crowding data based on the provided heatmap image.
@@ -71,37 +85,6 @@ SIMULATED_CROWDING_DATA = {
         '2 AM': {'status': 'not crowded', 'percentage': 5}
     }
 }
-
-# --- Conversational Questions for Profile Determination ---
-# These are simplified versions of the survey questions with controlled options.
-CONVERSATIONAL_QUESTIONS = [
-    {
-        "text": "Hello! I'm your Urbanvind Commuter Chatbot. To get started, I need to understand your travel habits. What time do you usually leave for work/school?",
-        "key": "What time do you usually leave for work/school?",
-        "options": ["Before 9:00 AM", "9:00 AM or later"]
-    },
-    {
-        "text": "How many days per week do you typically commute?",
-        "key": "How many days per week do you commute?",
-        "options": ["1-2 days", "3-4 days", "5+ days", "I work remotely"]
-    },
-    {
-        "text": "How crowded is your usual bus or train during peak hours?",
-        "key": "How crowded is your usual bus during peak hours?",
-        "options": ["Not crowded", "Slightly crowded", "Very crowded", "Overcrowded"]
-    },
-    {
-        "text": "If you knew your usual bus was full, would you change your departure time? (1='Definitely not', 5='Definitely')",
-        "key": "I would change my departure time if I knew my usual bus was full.",
-        "options": ["1", "2", "3", "4", "5"]
-    },
-    {
-        "text": "If your usual bus arrived 90% full, what would you most likely do?",
-        "key": "If your usual bus is 90% full when it arrives, what would you most likely do?",
-        "options": ["Wait for the next one", "Change my travel time", "Switch to a different line", "Board anyway", "Cancel or delay the trip"]
-    }
-]
-
 
 def call_gemini_api(prompt_text):
     """
@@ -155,10 +138,14 @@ def generate_bot_response_with_gemini(user_message, selected_profile, csv_summar
     the user's profile, simulated crowding data, and CSV survey summary.
     """
     profile_info = COMMUTER_PROFILES.get(selected_profile, {"description": "unknown", "logic_keywords": "unknown"})
-    current_hour = datetime.datetime.now().hour
-    current_time_key = '7 AM' if 7 <= current_hour < 9 else '1 PM' if 12 <= current_hour < 14 else '5 PM' if 16 <= current_hour < 18 else '2 AM'
+    
+    # Use the live Almere time for context
+    current_almere_time = get_current_almere_time()
+    current_hour = current_almere_time.hour
+    current_day = current_almere_time.strftime("%A")
+    current_time_key = '7 AM' if 7 <= current_hour < 9 else '8 AM' if current_hour == 8 else '1 PM' if 12 <= current_hour < 14 else '5 PM' if 16 <= current_hour < 18 else '6 PM' if current_hour == 18 else '2 AM'
 
-    # Construct the prompt for Gemini, including the CSV summary
+    # Construct the prompt for Gemini, including the CSV summary and live time context
     prompt = f"""
     You are Urbanvind Commuter Chatbot, a decision support system for Almere residents.
     Your goal is to provide tailored travel suggestions and information based on the user's commuter profile, real-time (simulated) crowding data, and insights from a survey of Almere commuters.
@@ -170,14 +157,19 @@ def generate_bot_response_with_gemini(user_message, selected_profile, csv_summar
     This means: {profile_info['description']}
     Key characteristics of this profile include: {profile_info['logic_keywords']}
 
-    Current simulated crowding data for key routes at {current_time_key}:
-    {json.dumps(SIMULATED_CROWDING_DATA, indent=2)}
+    Current live context:
+    - Time: {current_almere_time.strftime('%H:%M')}
+    - Day: {current_day}
+    - The most relevant time slot in the simulated data is: {current_time_key}
+    - Simulated crowding data for key routes at {current_time_key}:
+      {json.dumps(SIMULATED_CROWDING_DATA, indent=2)}
 
     Based on the user's profile, the survey insights, and the crowding data, provide a tailored travel suggestion or answer their question.
     Keep your response concise, helpful, and align it with their profile's characteristics.
     If the user asks about crowding, use the provided simulated data.
     If the user asks for general travel advice for Almere, use the current simulated crowding data and the survey insights to give a general recommendation.
     If the user asks for general advice, use their profile to suggest appropriate actions (e.g., for 'Flexible Avoider', suggest proactive changes; for 'Peak Routine Commuter', acknowledge their routine but gently suggest minor adjustments if needed).
+    If the user asks about a time when a bus is not running, clearly state that.
 
     User's message: "{user_message}"
     """
@@ -191,23 +183,25 @@ st.set_page_config(page_title="Urbanvind Commuter Chatbot", layout="centered")
 st.title("🏙️ Urbanvind Commuter Chatbot")
 st.markdown("Your personalized travel assistant for Almere.")
 
+# Display the current time at the top right
+display_current_time()
+
 # --- Sidebar for Live Crowding Data ---
 st.sidebar.title("📊 Live Crowding Data")
 st.sidebar.markdown("*(Simulated data for demonstration)*")
 
 # Get current time to determine peak/off-peak
-current_hour = datetime.datetime.now().hour
-current_time_key = '7 AM' if 7 <= current_hour < 9 else '1 PM' if 12 <= current_hour < 14 else '5 PM' if 16 <= current_hour < 18 else '2 AM'
+current_hour = get_current_almere_time().hour
+current_time_key = '7 AM' if 7 <= current_hour < 9 else '8 AM' if current_hour == 8 else '1 PM' if 12 <= current_hour < 14 else '5 PM' if 16 <= current_hour < 18 else '6 PM' if current_hour == 18 else '2 AM'
 
 st.sidebar.subheader("Bus Lines")
 for line, times in SIMULATED_CROWDING_DATA.items():
-    if "Bus" in line or line.startswith('M'):
-        data = times.get(current_time_key, {'status': 'not crowded', 'percentage': 0})
-        status = data['status']
-        percentage = data['percentage']
-        color = "green" if percentage < 50 else "orange" if percentage < 80 else "red"
-        st.sidebar.markdown(f"**{line}** at {current_time_key}:")
-        st.sidebar.progress(percentage, text=f"{percentage}% ({status})")
+    data = times.get(current_time_key, {'status': 'not crowded', 'percentage': 0})
+    status = data['status']
+    percentage = data['percentage']
+    color = "green" if percentage < 50 else "orange" if percentage < 80 else "red"
+    st.sidebar.markdown(f"**{line}** at {current_time_key}:")
+    st.sidebar.progress(percentage, text=f"{percentage}% ({status})")
 
 st.sidebar.subheader("Train Lines")
 # The image only shows bus lines, so we'll leave this section as a placeholder.
