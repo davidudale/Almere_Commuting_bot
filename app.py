@@ -14,7 +14,7 @@ GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemin
 
 # --- Load and Analyze Survey Data from CSV ---
 try:
-    df = pd.read_csv("urban1.csv")
+    df = pd.read_csv("urban.csv")
 
     # Clean and analyze the data to create a summary for the chatbot
     issues_frustration = df['What issues frustrate you most about Almere Bus line?'].value_counts()
